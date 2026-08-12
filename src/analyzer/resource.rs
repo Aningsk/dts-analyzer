@@ -383,11 +383,11 @@ fn extract_cpus(root: &DtsNode, res: &mut OsResources) {
         if !child.name.starts_with("cpu@") {
             continue;
         }
-        let mpidr = child
-            .get_property("reg")
-            .and_then(|p| p.as_cells())
-            .map(|cells| crate::utils::address::join_cells(&cells[..addr_cells.min(cells.len())]))
-            .unwrap_or(0) as u32;
+        // 无 reg 的 cpu 节点无法确定 MPIDR，跳过（避免全部落入 mpidr=0 被误判重复分配）
+        let Some(cells) = child.get_property("reg").and_then(|p| p.as_cells()) else {
+            continue;
+        };
+        let mpidr = crate::utils::address::join_cells(&cells[..addr_cells.min(cells.len())]) as u32;
         res.cpus.push(CpuInfo {
             name: child.name.clone(),
             mpidr,

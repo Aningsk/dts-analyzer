@@ -87,6 +87,12 @@ fn detect_interrupt_conflicts(report: &mut AnalysisReport) {
                 continue;
             }
             for irq in &p.interrupts {
+                // PPI（type=1）是 per-CPU 私有中断：虚拟化场景下各 OS 的
+                // PPI 物理独立（如各自 GIC 的维护中断 PPI 9），跨 OS 比较
+                // 无意义，跳过以避免误报
+                if irq.type_cell == 1 {
+                    continue;
+                }
                 let num = irq.linux_irq();
                 let entry = irq_users.entry(num).or_default();
                 let item = (os.os_name.clone(), p.name.clone());

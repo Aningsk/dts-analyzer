@@ -149,5 +149,8 @@ dts-analyzer/
   属性值类型按 dtc 反编译同款的启发式还原（可打印字符串 vs cell 数组）。
 - 外设收集限于根节点下深度 ≤ 2 且带 `reg` 属性的节点；总线桥下挂的
   深层子节点（如 i2c 从设备）不单独列出。
-- 中断冲突判定基于 Linux IRQ 号相等，不区分 hypervisor 层的中断路由策略。
+- 中断冲突判定基于 Linux IRQ 号相等，不区分 hypervisor 层的中断路由策略；
+  PPI 私有中断（type=1，如各 OS GIC 的维护中断）不参与跨 OS 冲突判定。
+- `interrupts-extended` 指向非 GIC 的自定义中断控制器（如 ddr 状态中断），
+  无法按 GIC 三元组通用解析，分析中忽略该属性。
 - 外设分类基于节点名/compatible 关键字启发式匹配，未覆盖的归入 Other。
