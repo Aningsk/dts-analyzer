@@ -535,32 +535,55 @@ fn extract_peripherals(root: &DtsNode, res: &mut OsResources) {
         });
     }
 
-    // 中断控制器单独收集（通常没有 usable reg 或有特殊 reg）
+    // 中断控制器单独收集（不受深度限制）：仅收真正的主中断控制器（GIC 家族），
+    // GPIO port 等同时带 interrupt-controller 属性的节点不纳入
     root.walk(&mut |node| {
-        if node.has_property("interrupt-controller") && !node.name.starts_with("cpu") {
-            if res.peripherals.iter().any(|p| p.node_path == node.path) {
-                return;
-            }
-            let ranges = node
-                .get_property("reg")
-                .and_then(|p| p.as_cells())
-                .map(|cells| cells_to_ranges(&cells, root_addr_cells, root_size_cells))
-                .unwrap_or_default();
-            res.peripherals.push(Peripheral {
-                name: node.name.clone(),
-                node_path: node.path.clone(),
-                peripheral_type: PeripheralType::InterruptController,
-                compatible: node.compatibles(),
-                reg_ranges: ranges,
-                interrupts: Vec::new(),
-                status: node
-                    .get_property("status")
-                    .and_then(|p| p.as_string())
-                    .unwrap_or_else(|| "okay".to_string()),
-                note: String::new(),
-            });
+        if !node.has_property("interrupt-controller") || node.name.starts_with("cpu") {
+            return;
         }
+        if !is_primary_intc(node) {
+            return;
+        }
+        if res.peripherals.iter().any(|p| p.node_path == node.path) {
+            return;
+        }
+        let ranges = node
+            .get_property("reg")
+            .and_then(|p| p.as_cells())
+            .map(|cells| cells_to_ranges(&cells, root_addr_cells, root_size_cells))
+            .unwrap_or_default();
+        res.peripherals.push(Peripheral {
+            name: node.name.clone(),
+            node_path: node.path.clone(),
+            peripheral_type: PeripheralType::InterruptController,
+            compatible: node.compatibles(),
+            reg_ranges: ranges,
+            interrupts: Vec::new(),
+            status: node
+                .get_property("status")
+                .and_then(|p| p.as_string())
+                .unwrap_or_else(|| "okay".to_string()),
+            note: String::new(),
+        });
     });
+}
+
+/// 判断 compatible 字符串是否属于 GIC 家族（按边界匹配，避免误中
+/// "logic" 等含 gic 子串的无关字符串）。
+fn compat_is_gic(compat: &str) -> bool {
+    let c = compat.to_lowercase();
+    c.contains(",gic") || c.starts_with("gic") || c.ends_with("-gic") || c.contains("gic-")
+}
+
+/// 判断节点是否为主中断控制器（GIC 家族）。
+///
+/// GPIO port（如 snps,dw-apb-gpio-port）也带 `interrupt-controller` 属性，
+/// 不能因此归入 GIC：需 compatible 属于 GIC 家族或节点名以 "gic" 开头。
+fn is_primary_intc(node: &DtsNode) -> bool {
+    if node.base_name().starts_with("gic") {
+        return true;
+    }
+    node.compatibles().iter().any(|c| compat_is_gic(c))
 }
 
 /// 带深度的先序遍历（根深度为 0）。
@@ -674,6 +697,10 @@ pub fn classify_peripheral(name: &str, compatibles: &[String]) -> PeripheralType
     if base_has("crypto") || base_has("trng") || compat_has("crypto") {
         return PeripheralType::Crypto;
     }
+    // GIC 主中断控制器（如 arm,gic-v3，节点名多为 interrupt-controller@xxx）
+    if base.starts_with("gic") || compatibles.iter().any(|c| compat_is_gic(c)) {
+        return PeripheralType::InterruptController;
+    }
     PeripheralType::Other
 }
 
@@ -696,6 +723,8 @@ mod tests {
         assert_eq!(classify_peripheral("lpwm0@27918000", &[]), PeripheralType::Pwm);
         assert_eq!(classify_peripheral("dpu_core0@30000000", &[]), PeripheralType::Display);
         assert_eq!(classify_peripheral("hwspinlock@27920000", &["gua,hwspinlock".into()]), PeripheralType::Other);
+        assert_eq!(classify_peripheral("interrupt-controller@24000000", &["arm,gic-v3".into()]), PeripheralType::InterruptController);
+        assert_eq!(classify_peripheral("gpio-port@0", &["snps,dw-apb-gpio-port".into()]), PeripheralType::Gpio);
     }
 
     #[test]
@@ -752,5 +781,59 @@ mod tests {
         assert!(res.peripherals.iter().any(|p| p.name == "serial@270a1000"));
         let serial = res.peripherals.iter().find(|p| p.name == "serial@270a1000").unwrap();
         assert_eq!(serial.interrupts[0].linux_irq(), 0x1c7 + 32);
+    }
+
+    #[test]
+    fn test_intc_collection_gic_only() {
+        // GPIO port 也带 interrupt-controller 属性，不应被收为 GIC；
+        // 真正的 arm,gic-v3 即使在深度 > 2 也应被收为 InterruptController
+        let dts = crate::dts::parse_dts_text(
+            r#"
+/dts-v1/;
+/ {
+    #address-cells = <2>;
+    #size-cells = <2>;
+    soc {
+        #address-cells = <2>;
+        #size-cells = <2>;
+        gic0: interrupt-controller@24000000 {
+            compatible = "arm,gic-v3";
+            interrupt-controller;
+            reg = <0x0 0x24000000 0x0 0x10000>;
+        };
+        gpio@27020000 {
+            compatible = "snps,dw-apb-gpio";
+            reg = <0x0 0x27020000 0x0 0x1000>;
+            gpio-port@0 {
+                compatible = "snps,dw-apb-gpio-port";
+                reg = <0x0>;
+                gpio-controller;
+                interrupt-controller;
+            };
+        };
+    };
+};
+"#,
+            "test-intc.dts",
+        )
+        .unwrap();
+        let cfg = OsConfig {
+            name: "TestOS".into(),
+            dts_file: Some("test-intc.dts".into()),
+            dtb_file: None,
+            aliases: vec![],
+        };
+        let res = extract_os_resources(&cfg, &dts, &Rules::default());
+        let intcs: Vec<_> = res
+            .peripherals
+            .iter()
+            .filter(|p| p.peripheral_type == PeripheralType::InterruptController)
+            .collect();
+        assert_eq!(intcs.len(), 1);
+        assert_eq!(intcs[0].name, "interrupt-controller@24000000");
+        assert!(
+            !res.peripherals.iter().any(|p| p.name == "gpio-port@0"),
+            "gpio-port 不应作为外设/GIC 收集"
+        );
     }
 }
