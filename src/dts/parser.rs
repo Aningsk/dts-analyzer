@@ -489,6 +489,19 @@ impl<'a> Parser<'a> {
                     self.next()?;
                     items.push(PropItem::Bytes(self.parse_byte_array()?));
                 }
+                Tok::Ref(r) => {
+                    // 裸 phandle 引用（如 aliases 中 `serial0 = &uart0;`），
+                    // 等价于单 cell 的 phandle 值；未解析时记为 0
+                    self.next()?;
+                    log::debug!("bare reference '{}' resolved to 0", r);
+                    items.push(PropItem::Cells(vec![0]));
+                }
+                Tok::Keyword(k) if k == "bits" => {
+                    // 属性值顶层的 /bits/ N（如 `prop = /bits/ 8 <...>;`）：
+                    // 简化处理，读掉位宽数字，后续 <...> 按普通 cell 解析
+                    self.next()?;
+                    if let Tok::Num(_) = self.next()? {}
+                }
                 other => {
                     return self.lexer.err(format!(
                         "unexpected token {:?} in property value",
@@ -846,6 +859,29 @@ mod tests {
         let pool = file.root.find_path("/reserved-memory/pool@90000000").unwrap();
         assert!(pool.has_property("reusable"));
         assert_eq!(pool.compatibles(), vec!["shared-dma-pool"]);
+    }
+
+    #[test]
+    fn test_parse_bare_ref_and_bits() {
+        // 裸 phandle 引用（aliases）与属性值顶层的 /bits/ N
+        let dts = r#"
+/dts-v1/;
+/ {
+    aliases {
+        serial0 = &uart0;
+    };
+    uart0: serial@1000 {
+        reg = <0x1000 0x100>;
+        lut = /bits/ 8 <0x01 0x02 0x03>;
+    };
+};
+"#;
+        let file = parse_dts_text(dts, "test.dts").unwrap();
+        let aliases = file.root.find_path("/aliases").unwrap();
+        // 裸引用解析为单 cell（未解析 phandle 记 0）
+        assert_eq!(aliases.get_property("serial0").unwrap().as_cells().unwrap(), vec![0]);
+        let uart = file.root.find_path("/serial@1000").unwrap();
+        assert_eq!(uart.get_property("lut").unwrap().as_cells().unwrap(), vec![1, 2, 3]);
     }
 
     #[test]

@@ -116,7 +116,7 @@ dts_file = "b.dts"
     #[test]
     fn test_shared_peripheral_detection() {
         let mut report = make_report();
-        let mut os_a = OsResources {
+        let os_a = OsResources {
             os_name: "A".into(),
             dts_path: "a.dts".into(),
             cpus: vec![],

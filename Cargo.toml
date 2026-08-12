@@ -20,6 +20,7 @@ fern = "0.7"
 indexmap = "2.0"
 chrono = "0.4"
 rust_xlsxwriter = "0.97.1"
+fdt = "0.1.5"
 
 [profile.release]
 lto = true

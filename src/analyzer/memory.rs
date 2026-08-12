@@ -262,7 +262,7 @@ mod tests {
 
     #[test]
     fn test_parse_gipc_peers() {
-        let mut report = AnalysisReport {
+        let report = AnalysisReport {
             title: String::new(),
             os_names: vec!["IVI".into(), "Cluster".into(), "ADAS".into()],
             os_resources: Vec::new(),

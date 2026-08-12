@@ -1,6 +1,11 @@
 # dts-analyzer 配置文件示例。
-# 使用方法：复制为 config.toml，按实际平台修改 OS 名称与 DTS 路径。
-# 注意：DTS / 输出路径为相对路径时，基于 config.toml 所在目录解析。
+# 使用方法：复制为 config.toml，按实际平台修改 OS 名称与输入文件路径。
+# 注意：输入 / 输出路径为相对路径时，基于 config.toml 所在目录解析。
+#
+# 每个 OS 的输入支持两种格式（二选一，按文件内容自动识别）：
+#   dtb_file —— 编译后的设备树二进制（推荐，语法兼容性问题最少）
+#   dts_file —— 设备树源码文本（手写源码中的引用/include 等由内置解析器处理）
+# 若只有源码 DTS，可先用 dtc 预编译：dtc -I dts -O dtb -o os-a.dtb os-a.dts
 
 [output]
 # 输出 Excel 文件路径
@@ -11,13 +16,14 @@ title = "多 OS 资源分配分析"
 # 每个 OS 一个 [[os]] 条目，至少一个
 [[os]]
 name = "OS-A"
-dts_file = "path/to/os-a.dts"
+dtb_file = "path/to/os-a.dtb"
 # 短名列表（可选）：用于 gipc_<src>_<dst> 保留区命名中的对端匹配，
 # 默认取 name 的小写形式
 aliases = ["os-a"]
 
 [[os]]
 name = "OS-B"
+# 也可以直接给源码 DTS（与 dtb_file 二选一）
 dts_file = "path/to/os-b.dts"
 
 [rules]

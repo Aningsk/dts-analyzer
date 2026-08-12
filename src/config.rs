@@ -34,11 +34,22 @@ fn default_title() -> String {
 pub struct OsConfig {
     /// OS 名称（如 "IVI" / "Cluster" / "ADAS"）。
     pub name: String,
-    /// 对应的 DTS 文件路径。
-    pub dts_file: PathBuf,
+    /// DTS 源文件路径（与 `dtb_file` 二选一）。
+    #[serde(default)]
+    pub dts_file: Option<PathBuf>,
+    /// DTB 二进制文件路径（与 `dts_file` 二选一，推荐）。
+    #[serde(default)]
+    pub dtb_file: Option<PathBuf>,
     /// 用于 gipc_<a>_<b> 命名的短名列表（可选，默认取小写 name）。
     #[serde(default)]
     pub aliases: Vec<String>,
+}
+
+impl OsConfig {
+    /// 输入文件路径（DTB 优先）。
+    pub fn input_file(&self) -> Option<&PathBuf> {
+        self.dtb_file.as_ref().or(self.dts_file.as_ref())
+    }
 }
 
 /// 解析规则配置（可选）。
@@ -100,9 +111,21 @@ impl Config {
         };
 
         for os in &mut config.os {
-            os.dts_file = resolve(&os.dts_file);
-            if !os.dts_file.exists() {
-                anyhow::bail!("OS '{}' 的 DTS 文件不存在: {}", os.name, os.dts_file.display());
+            let Some(file) = os.input_file() else {
+                anyhow::bail!("OS '{}' 必须配置 dts_file 或 dtb_file 之一", os.name);
+            };
+            let resolved = resolve(file);
+            if !resolved.exists() {
+                anyhow::bail!(
+                    "OS '{}' 的输入文件不存在: {}",
+                    os.name,
+                    resolved.display()
+                );
+            }
+            if os.dtb_file.is_some() {
+                os.dtb_file = Some(resolved);
+            } else {
+                os.dts_file = Some(resolved);
             }
             if os.aliases.is_empty() {
                 os.aliases = vec![os.name.to_lowercase()];
@@ -147,5 +170,21 @@ memory_node_names = ["memory"]
         assert_eq!(cfg.os.len(), 2);
         assert_eq!(cfg.os[1].aliases, vec!["cluster", "linux"]);
         assert_eq!(cfg.output.title, "DTS 资源分析报告");
+        assert_eq!(cfg.os[0].input_file().unwrap().to_str().unwrap(), "DTB/android.dts");
+    }
+
+    #[test]
+    fn test_dtb_file_config() {
+        let toml_text = r#"
+[output]
+excel_file = "report.xlsx"
+
+[[os]]
+name = "IVI"
+dtb_file = "DTB/android.dtb"
+"#;
+        let cfg: Config = toml::from_str(toml_text).unwrap();
+        assert!(cfg.os[0].dts_file.is_none());
+        assert_eq!(cfg.os[0].input_file().unwrap().to_str().unwrap(), "DTB/android.dtb");
     }
 }

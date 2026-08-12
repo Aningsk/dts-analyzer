@@ -16,8 +16,9 @@ pub fn analyze(config: &Config) -> Result<AnalysisReport> {
 
     // Phase 1: 逐个 OS 提取资源（文件间相互独立，可并行；此处顺序执行已足够快）
     for os_cfg in &config.os {
-        log::info!("解析 OS [{}] 的 DTS: {}", os_cfg.name, os_cfg.dts_file.display());
-        let dts = crate::dts::parse_dts_file(&os_cfg.dts_file)?;
+        let input = os_cfg.input_file().expect("配置校验已保证输入文件存在");
+        log::info!("解析 OS [{}] 的设备树: {}", os_cfg.name, input.display());
+        let dts = crate::dts::parse_input_file(input)?;
         let resources = resource::extract_os_resources(os_cfg, &dts, &config.rules);
         log::info!(
             "  -> {} 个 CPU, {} 段系统内存, {} 段保留内存, {} 个外设",

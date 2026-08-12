@@ -1,15 +1,18 @@
 # dts-analyzer
 
-多 OS Device Tree Source (DTS) 资源分配分析工具。
+多 OS Device Tree 资源分配分析工具。
 
-解析多个 OS 的 DTS 文件（如 `dtc` 反编译输出），提取 CPU、系统内存、保留内存、
+解析多个 OS 的设备树（DTB 二进制或 DTS 源码文本），提取 CPU、系统内存、保留内存、
 外设、中断等资源，识别资源在 OS 之间的**分配、共享与冲突**，并生成 Excel 报告。
 
 ## 功能特性
 
-- **DTS 解析**：内置手写递归下降解析器，支持节点/属性/cell 数组/字节数组、
-  label、节点合并、`&label { }` 覆盖、`/delete-node/`、`/delete-property/`、
-  `/memreserve/`、`/include/` 等 DTS 语法要素。
+- **双格式输入**：按文件内容魔数自动识别——
+  - DTB（`\xd0\x0d\xfe\xed`）：基于 [`fdt`](https://crates.io/crates/fdt) crate 解析，
+    语法兼容性问题最少（推荐）
+  - DTS 文本：内置手写递归下降解析器，支持节点/属性/cell 数组/字节数组、
+    label、裸 phandle 引用、`/bits/ N`、节点合并、`&label { }` 覆盖、
+    `/delete-node/`、`/delete-property/`、`/memreserve/`、`/include/` 等语法要素
 - **资源提取**：
   - CPU（按 `cpus` 节点 `reg` 解析 MPIDR，跨 OS 去重编号）
   - 系统内存（`memory` 节点，支持 64 位地址）
@@ -72,19 +75,23 @@ title = "多 OS 资源分配分析"          # 报告标题（可选）
 
 [[os]]                      # 每个 OS 一个条目
 name = "OS-A"               # OS 名称（报告中显示）
-dts_file = "path/to/os-a.dts"  # DTS 文件路径（相对路径基于配置文件所在目录）
+dtb_file = "path/to/os-a.dtb"  # DTB 二进制（推荐，与 dts_file 二选一）
 aliases = ["os-a"]          # 短名（用于 gipc_<a>_<b> 对端匹配，可选）
 
 [[os]]
 name = "OS-B"
-dts_file = "path/to/os-b.dts"
+dts_file = "path/to/os-b.dts"  # 也可直接给源码 DTS
 
 [rules]                     # 可选解析规则
 memory_node_names = ["memory"]                    # 系统内存节点名
 shared_keywords = ["gipc", "shm", "shmem", "shared", "ipc", "mailbox"]
 ```
 
-约束：至少一个 `[[os]]`；OS 名称不可重复；DTS 文件必须存在。
+约束：至少一个 `[[os]]`；OS 名称不可重复；每个 OS 必须配置 `dts_file` 或
+`dtb_file` 之一且文件存在；相对路径基于配置文件所在目录解析。
+
+> 提示：若只有源码 DTS，可先用 `dtc -I dts -O dtb -o os-a.dtb os-a.dts`
+> 预编译为 DTB 再分析，兼容性更好。
 
 ## 输出 Excel 内容
 
@@ -105,7 +112,7 @@ dts-analyzer/
 │   ├── main.rs          # CLI 入口（clap + fern 日志）
 │   ├── lib.rs           # 业务入口：加载配置 → 分析 → 导出
 │   ├── config.rs        # TOML 配置解析与校验
-│   ├── dts/             # DTS 解析器（词法/语法/节点/属性模型）
+│   ├── dts/             # 设备树解析（dtb.rs 二进制适配 + parser.rs 文本解析器）
 │   ├── analyzer/        # 资源提取与共享/冲突分析
 │   ├── export/          # Excel 导出（rust_xlsxwriter，6 Sheet 布局）
 │   └── utils/           # 地址范围等工具
@@ -115,6 +122,8 @@ dts-analyzer/
 
 ## 已知限制
 
+- DTB 输入不含 label 与注释（分析逻辑不依赖二者，无实际影响）；
+  属性值类型按 dtc 反编译同款的启发式还原（可打印字符串 vs cell 数组）。
 - 外设收集限于根节点下深度 ≤ 2 且带 `reg` 属性的节点；总线桥下挂的
   深层子节点（如 i2c 从设备）不单独列出。
 - 中断冲突判定基于 Linux IRQ 号相等，不区分 hypervisor 层的中断路由策略。

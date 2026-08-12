@@ -355,7 +355,10 @@ pub fn extract_os_resources(os_cfg: &OsConfig, dts: &DtsFile, rules: &Rules) -> 
     let root = &dts.root;
     let mut res = OsResources {
         os_name: os_cfg.name.clone(),
-        dts_path: os_cfg.dts_file.display().to_string(),
+        dts_path: os_cfg
+            .input_file()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default(),
         cpus: Vec::new(),
         memory_regions: Vec::new(),
         reserved_regions: Vec::new(),
@@ -736,7 +739,8 @@ mod tests {
         .unwrap();
         let cfg = OsConfig {
             name: "TestOS".into(),
-            dts_file: "test.dts".into(),
+            dts_file: Some("test.dts".into()),
+            dtb_file: None,
             aliases: vec![],
         };
         let res = extract_os_resources(&cfg, &dts, &Rules::default());
