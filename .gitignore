@@ -1,0 +1,16 @@
+# 构建产物
+/target
+
+# 本地实际配置（含项目特定信息，从 config.example.toml 复制后修改）
+/config.toml
+
+# 生成的 Excel 报告
+*.xlsx
+
+# 办公软件锁定/临时文件
+.~*
+~$*
+
+# 编辑器
+.vscode/
+.idea/

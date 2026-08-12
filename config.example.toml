@@ -1,0 +1,27 @@
+# dts-analyzer 配置文件示例。
+# 使用方法：复制为 config.toml，按实际平台修改 OS 名称与 DTS 路径。
+# 注意：DTS / 输出路径为相对路径时，基于 config.toml 所在目录解析。
+
+[output]
+# 输出 Excel 文件路径
+excel_file = "resources_list.xlsx"
+# 报告标题（显示在 Excel 总览页）
+title = "多 OS 资源分配分析"
+
+# 每个 OS 一个 [[os]] 条目，至少一个
+[[os]]
+name = "OS-A"
+dts_file = "path/to/os-a.dts"
+# 短名列表（可选）：用于 gipc_<src>_<dst> 保留区命名中的对端匹配，
+# 默认取 name 的小写形式
+aliases = ["os-a"]
+
+[[os]]
+name = "OS-B"
+dts_file = "path/to/os-b.dts"
+
+[rules]
+# 系统内存节点名称（按节点名匹配 memory / memory@xxx）
+memory_node_names = ["memory"]
+# reserved-memory 中视为共享用途的名称关键字
+shared_keywords = ["gipc", "shm", "shmem", "shared", "ipc", "mailbox"]

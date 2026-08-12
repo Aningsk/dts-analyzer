@@ -1,0 +1,25 @@
+[package]
+name = "dts-analyzer"
+version = "0.1.0"
+edition = "2021"
+description = "分析多个 OS 的 Device Tree Source (DTS)，统计资源分配与共享情况并生成 Excel 报告"
+license = "MIT"
+
+[[bin]]
+name = "dts-analyzer"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0"
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+clap = { version = "4.5", features = ["derive"] }
+log = "0.4"
+fern = "0.7"
+indexmap = "2.0"
+chrono = "0.4"
+rust_xlsxwriter = "0.97.1"
+
+[profile.release]
+lto = true
