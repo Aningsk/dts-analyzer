@@ -43,6 +43,8 @@ fn build_memory_matrix(report: &mut AnalysisReport) {
     for (i, os) in report.os_resources.iter().enumerate() {
         for region in &os.memory_regions {
             let mut overlap_with = Vec::new();
+            // 记录各重叠子区间，用于合并展示实际重叠范围（而非整个区间）
+            let mut intersections: Vec<AddressRange> = Vec::new();
             for (j, other_range) in &all {
                 if *j == i {
                     continue;
@@ -52,20 +54,48 @@ fn build_memory_matrix(report: &mut AnalysisReport) {
                     if !overlap_with.contains(name) {
                         overlap_with.push(name.clone());
                     }
+                    if let Some(sec) = region.range.intersection(other_range) {
+                        intersections.push(sec);
+                    }
                 }
             }
             let note = if overlap_with.is_empty() {
                 String::new()
             } else {
-                let note = format!("与 {} 重叠（repeated）", overlap_with.join(", "));
+                let merged = crate::utils::address::merge_ranges(intersections);
+                let inter_desc: Vec<String> = merged
+                    .iter()
+                    .map(|r| {
+                        format!(
+                            "{}~{} ({})",
+                            AddressRange::fmt_addr(r.start),
+                            AddressRange::fmt_addr(r.last()),
+                            AddressRange::fmt_size(r.size)
+                        )
+                    })
+                    .collect();
+                let note = format!(
+                    "与 {} 重叠: {}（repeated）",
+                    overlap_with.join(", "),
+                    inter_desc.join("; ")
+                );
                 report.shared_resources.push(SharedResource {
-                    name: format!(
-                        "{} {}",
-                        AddressRange::fmt_addr(region.range.start),
-                        AddressRange::fmt_size(region.range.size)
-                    ),
+                    name: {
+                        let mut s = String::new();
+                        for (idx, r) in merged.iter().enumerate() {
+                            if idx > 0 {
+                                s.push_str("; ");
+                            }
+                            s.push_str(&format!(
+                                "{} {}",
+                                AddressRange::fmt_addr(r.start),
+                                AddressRange::fmt_size(r.size)
+                            ));
+                        }
+                        s
+                    },
                     kind: SharedKind::MemoryOverlap,
-                    range: Some(region.range),
+                    range: merged.first().copied(),
                     os_list: {
                         let mut l = vec![os.os_name.clone()];
                         for n in &overlap_with {
@@ -75,7 +105,10 @@ fn build_memory_matrix(report: &mut AnalysisReport) {
                         }
                         l
                     },
-                    details: format!("系统内存区间在多个 OS 中重复声明: {}", region.node_path),
+                    details: format!(
+                        "系统内存区间在多个 OS 中重复声明（仅重叠部分）: {}",
+                        region.node_path
+                    ),
                 });
                 note
             };

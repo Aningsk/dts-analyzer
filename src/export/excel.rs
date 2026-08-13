@@ -256,7 +256,7 @@ fn write_resource_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles
     for i in 0..os_count {
         ws.set_column_width(2 + i as u16, 14)?;
     }
-    ws.set_column_width(2 + os_count as u16, 40)?;
+    ws.set_column_width(2 + os_count as u16, 76)?;
     ws.set_freeze_panes(1, 0)?;
 
     let mut headers: Vec<&str> = vec!["Resources", ""];
@@ -363,7 +363,7 @@ fn write_category_label(ws: &mut Worksheet, label: &str, start_row: u32, end_row
 
 fn write_memory_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "内存分配矩阵")?;
-    let widths = [20.0, 20.0, 16.0, 12.0, 14.0, 34.0, 12.0, 44.0];
+    let widths = [20.0, 20.0, 16.0, 12.0, 14.0, 34.0, 12.0, 76.0];
     for (i, w) in widths.iter().enumerate() {
         ws.set_column_width(i as u16, *w)?;
     }
