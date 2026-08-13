@@ -93,14 +93,71 @@ impl Styles {
     }
 }
 
+// ---------------------------------------------------------------------------
+// 自适应列宽：写单元格时记录各列内容，sheet 写完后按最长内容计算列宽。
+// ---------------------------------------------------------------------------
+
+/// 列宽下限（字符数）。
+const MIN_COL_WIDTH: f64 = 10.0;
+/// 列宽上限：超长文本（如冲突描述/建议）截断到此宽度，避免单列过宽。
+const MAX_COL_WIDTH: f64 = 100.0;
+
+thread_local! {
+    /// 当前 sheet 的单元格内容记录：(列号, 文本)。
+    static COL_RECORDS: std::cell::RefCell<Vec<(u16, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// 开始记录一个 sheet 的列内容（写表体前调用）。
+fn autowidth_begin() {
+    COL_RECORDS.with(|r| r.borrow_mut().clear());
+}
+
+/// 按记录的最长内容设置各列宽度（sheet 写完后调用）。
+fn autowidth_apply(ws: &mut Worksheet) -> Result<()> {
+    let widths: Vec<(u16, f64)> = COL_RECORDS.with(|r| {
+        let records = r.borrow();
+        let mut max: std::collections::BTreeMap<u16, f64> = std::collections::BTreeMap::new();
+        for (col, text) in records.iter() {
+            let w = display_width(text) + 2.0; // 余量：光标/边框
+            let e = max.entry(*col).or_insert(0.0);
+            if w > *e {
+                *e = w;
+            }
+        }
+        max.into_iter()
+            .map(|(c, w)| (c, w.clamp(MIN_COL_WIDTH, MAX_COL_WIDTH)))
+            .collect()
+    });
+    for (col, w) in widths {
+        ws.set_column_width(col, w)?;
+    }
+    Ok(())
+}
+
+/// 估算文本显示宽度：CJK 等宽字符按 2 计，其余按 1。
+fn display_width(text: &str) -> f64 {
+    text.chars()
+        .map(|c| {
+            if (c as u32) < 0x2E80 { 1.0 } else { 2.0 }
+        })
+        .sum()
+}
+
 /// 写带格式的字符串（格式按引用传入，内部克隆）。
 fn ws_str(ws: &mut Worksheet, row: u32, col: u16, text: &str, fmt: &Format) {
     let _ = ws.write_string_with_format(row, col, text, fmt);
+    COL_RECORDS.with(|r| r.borrow_mut().push((col, text.to_string())));
 }
 
 /// 写带格式的数字。
 fn ws_num(ws: &mut Worksheet, row: u32, col: u16, value: f64, fmt: &Format) {
     let _ = ws.write_number_with_format(row, col, value, fmt);
+    let text = if value.fract() == 0.0 {
+        format!("{}", value as i64)
+    } else {
+        value.to_string()
+    };
+    COL_RECORDS.with(|r| r.borrow_mut().push((col, text)));
 }
 
 /// 写带格式的空单元格（用于保持边框样式）。
@@ -145,11 +202,7 @@ fn write_header_row(ws: &mut Worksheet, row: u32, headers: &[&str], st: &Styles)
 
 fn write_overview(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "总览 (Overview)")?;
-    ws.set_column_width(0, 26)?;
-    ws.set_column_width(1, 46)?;
-    for c in 2..(2 + report.os_names.len()) {
-        ws.set_column_width(c as u16, 14)?;
-    }
+    autowidth_begin();
 
     ws.merge_range(0, 0, 0, (1 + report.os_names.len().max(3)) as u16, &report.title, &st.title)?;
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -216,6 +269,7 @@ fn write_overview(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Re
         ws_str(ws, row, 1, &value, fmt);
         row += 1;
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
@@ -251,12 +305,7 @@ const CATEGORY_ORDER: &[PeripheralType] = &[
 fn write_resource_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "资源分配矩阵")?;
     let os_count = report.os_names.len();
-    ws.set_column_width(0, 16)?;
-    ws.set_column_width(1, 34)?;
-    for i in 0..os_count {
-        ws.set_column_width(2 + i as u16, 14)?;
-    }
-    ws.set_column_width(2 + os_count as u16, 76)?;
+    autowidth_begin();
     ws.set_freeze_panes(1, 0)?;
 
     let mut headers: Vec<&str> = vec!["Resources", ""];
@@ -339,6 +388,7 @@ fn write_resource_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles
         }
         write_category_label(ws, ptype.as_str(), cat_start, row - 1, st);
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
@@ -347,6 +397,8 @@ fn write_category_label(ws: &mut Worksheet, label: &str, start_row: u32, end_row
     if end_row < start_row {
         return;
     }
+    // merge_range 不经过 ws_str，手动补记列宽
+    COL_RECORDS.with(|r| r.borrow_mut().push((0, label.to_string())));
     for r in start_row + 1..=end_row {
         ws_blank(ws, r, 0, &st.category);
     }
@@ -363,10 +415,7 @@ fn write_category_label(ws: &mut Worksheet, label: &str, start_row: u32, end_row
 
 fn write_memory_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "内存分配矩阵")?;
-    let widths = [20.0, 20.0, 16.0, 12.0, 14.0, 34.0, 12.0, 76.0];
-    for (i, w) in widths.iter().enumerate() {
-        ws.set_column_width(i as u16, *w)?;
-    }
+    autowidth_begin();
     ws.set_freeze_panes(2, 0)?;
 
     ws.merge_range(0, 0, 0, 7, "内存分配矩阵（系统内存 + 保留内存）", &st.title)?;
@@ -429,6 +478,7 @@ fn write_memory_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) 
         ws_str(ws, row, 6, &r.os, fmt);
         ws_str(ws, row, 7, &r.note, fmt);
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
@@ -438,10 +488,7 @@ fn write_memory_matrix(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) 
 
 fn write_shared_resources(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "共享资源清单")?;
-    let widths = [34.0, 22.0, 40.0, 24.0, 60.0];
-    for (i, w) in widths.iter().enumerate() {
-        ws.set_column_width(i as u16, *w)?;
-    }
+    autowidth_begin();
     ws.set_freeze_panes(1, 0)?;
 
     write_header_row(ws, 0, &["资源名称", "共享类型", "地址范围", "共享 OS", "详细信息"], st);
@@ -477,6 +524,7 @@ fn write_shared_resources(wb: &mut Workbook, report: &AnalysisReport, st: &Style
     if row == 1 {
         ws_str(ws, 1, 0, "未发现共享资源", &st.gray);
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
@@ -498,15 +546,7 @@ fn kind_order(kind: SharedKind) -> u8 {
 fn write_peripheral_allocation(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "外设分配")?;
     let os_count = report.os_names.len();
-    ws.set_column_width(0, 14)?;
-    ws.set_column_width(1, 30)?;
-    ws.set_column_width(2, 16)?;
-    ws.set_column_width(3, 14)?;
-    for i in 0..os_count {
-        ws.set_column_width(4 + i as u16, 12)?;
-    }
-    ws.set_column_width(4 + os_count as u16, 44)?;
-    ws.set_column_width(5 + os_count as u16, 30)?;
+    autowidth_begin();
     ws.set_freeze_panes(1, 0)?;
 
     let mut headers: Vec<&str> = vec!["类别", "外设", "基地址", "IRQ"];
@@ -558,6 +598,7 @@ fn write_peripheral_allocation(wb: &mut Workbook, report: &AnalysisReport, st: &
         };
         ws_str(ws, row, 5 + os_count as u16, &note, fmt);
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
@@ -567,16 +608,14 @@ fn write_peripheral_allocation(wb: &mut Workbook, report: &AnalysisReport, st: &
 
 fn write_conflicts(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> Result<()> {
     let ws = add_sheet(wb, "冲突报告")?;
-    let widths = [16.0, 28.0, 24.0, 60.0, 60.0];
-    for (i, w) in widths.iter().enumerate() {
-        ws.set_column_width(i as u16, *w)?;
-    }
+    autowidth_begin();
     ws.set_freeze_panes(1, 0)?;
 
     write_header_row(ws, 0, &["冲突类型", "资源", "涉及 OS", "描述", "建议"], st);
 
     if report.conflicts.is_empty() {
         ws.merge_range(1, 0, 1, 4, "未检测到冲突", &st.ok)?;
+        autowidth_apply(ws)?;
         return Ok(());
     }
 
@@ -596,6 +635,7 @@ fn write_conflicts(wb: &mut Workbook, report: &AnalysisReport, st: &Styles) -> R
         ws_str(ws, row, 3, &c.description, fmt);
         ws_str(ws, row, 4, &c.suggestion, fmt);
     }
+    autowidth_apply(ws)?;
     Ok(())
 }
 
